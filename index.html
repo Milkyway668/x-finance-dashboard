@@ -264,8 +264,9 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15p
 .refreshbtn:disabled{color:var(--ink-3);cursor:default}
 .exportmenu{margin-left:0}
 
-.ava{width:26px;height:26px;border-radius:50%;flex:0 0 26px;display:grid;place-items:center;
-  color:#fff;font-size:11.5px;font-weight:700;letter-spacing:.3px}
+.ava{position:relative;overflow:hidden;width:26px;height:26px;border-radius:50%;flex:0 0 26px;
+  display:grid;place-items:center;color:#fff;font-size:11.5px;font-weight:700;letter-spacing:.3px}
+.ava img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:50%}
 .ava.lg{width:44px;height:44px;flex:0 0 44px;font-size:16px}
 </style>
 </head>
@@ -355,7 +356,7 @@ function buildBars(){
     `` +
     accs.map((a,i)=>`
       <button class="sitem ${fAcc===a?"on":""}" data-acc="${a}" title="@${a}">
-        <span class="ava" style="background:${AVA_COLORS[i%AVA_COLORS.length]}">${(ACC_NAMES[a]||a).replace(/[^A-Za-z一-龥]/g,"").slice(0,1).toUpperCase()}</span>
+        <span class="ava" style="background:${AVA_COLORS[i%AVA_COLORS.length]}">${(ACC_NAMES[a]||a).replace(/[^A-Za-z一-龥]/g,"").slice(0,1).toUpperCase()}<img src="assets/avatars/${a}.jpg" alt="" loading="lazy" onerror="this.remove()"></span>
         <span class="nm">${ACC_NAMES[a]||a}</span>
       </button>`).join("");
 
