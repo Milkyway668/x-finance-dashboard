@@ -447,12 +447,12 @@ function updateDigestVisibility(){
     const tw=sel.reduce((a,d)=>a+d.tweets.length,0);
     head.hidden=false;
     head.innerHTML=`<div class="acctop">
-        <span class="ava lg" style="background:#0B2A5B">${name.replace(/[^A-Za-z一-龥]/g,"").slice(0,1).toUpperCase()}</span>
+        <span class="ava lg" style="background:#0B2A5B">${name.replace(/[^A-Za-z一-龥]/g,"").slice(0,1).toUpperCase()}<img src="assets/avatars/${fAcc}.jpg" alt="" onerror="this.remove()"></span>
         <div><h2>${name}</h2><div class="h">@${fAcc}</div></div>
         <div class="cnt">${tw} 条推文</div>
       </div>${tw? `<div class="accsum">${summaryBlock("@" + fAcc)}</div>` : `<div class="accsum sumempty">该范围内暂无推文</div>`}`;
     el("#sAcc").textContent=1; el("#sTw").textContent=tw;
-    setTimeout(()=>liveSummary("@"+fAcc),0);
+    setTimeout(()=>{ if(typeof liveSummary==="function") liveSummary("@"+fAcc); },0);
   }else{
     digest.hidden=true;
     if(flowBox) flowBox.hidden=false;
@@ -467,7 +467,7 @@ function updateDigestVisibility(){
       </div>${tw? `<div class="accsum">${summaryBlock(fTheme)}</div>` : `<div class="accsum sumempty">该范围内暂无推文</div>`}`;
     el("#sAcc").textContent=new Set(rows.flatMap(d=>d.accounts)).size;
     el("#sTw").textContent=tw;
-    setTimeout(()=>liveSummary(fTheme),0);
+    setTimeout(()=>{ if(typeof liveSummary==="function") liveSummary(fTheme); },0);
   }
 }
 function render(){
