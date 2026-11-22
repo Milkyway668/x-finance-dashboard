@@ -73,7 +73,8 @@ def call(key, base, texts):
 def main():
     env = load_env()
     key = env["DEEPSEEK_API_KEY"]; base = env.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-    src = sorted(glob.glob(os.path.join(ROOT, "data", "fetch_*.json")))[-1]
+    cands = glob.glob(os.path.join(ROOT, "data", "fetch_*.json")) +         glob.glob(os.path.join(ROOT, "data", "fetch_inprogress.json"))
+src = max(cands, key=os.path.getmtime)
     data = json.load(open(src, encoding="utf-8"))
     done = existing_ids()
 

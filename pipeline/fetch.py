@@ -231,6 +231,13 @@ def main():
                     log(f"   - {uid}  ERROR {str(e)[:70]}")
                 time.sleep(random.randint(2, 4))
             result[u] = items
+            # 每完成一个账号就落盘，避免中断导致前面的抓取白费
+            try:
+                tmp = os.path.join(OUTDIR, "fetch_inprogress.json")
+                json.dump(result, open(tmp, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+                log(f"  [存档] 已保存 {len(result)} 个账号")
+            except Exception as e:
+                log("  存档失败:", str(e)[:60])
         ctx.close()
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M")
