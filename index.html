@@ -743,6 +743,15 @@ function renderDigest(){
       </p>`).join("")}
     <div class="dnote">${D.note||""}</div></div>`;
 }
+/* 默认时间范围随数据跨度自动选择：跨度 ≥14 天用 30 天，否则用 7 天 */
+(function initRange(){
+  const dates=DATA.map(d=>d.date).filter(Boolean).sort();
+  if(!dates.length) return;
+  const span=(new Date(dates[dates.length-1])-new Date(dates[0]))/86400000;
+  rangeDays = span>=14 ? 30 : 7;
+  const sel=el("#rangeSel"); if(sel) sel.value=String(rangeDays);
+})();
+
 el("#sAcc").textContent=MONITORED.length||new Set(DATA.flatMap(d=>d.accounts)).size;
 el("#sTw").textContent=DATA.reduce((a,d)=>a+d.tweets.length,0);
 const upd=document.getElementById("sUpd");

@@ -30,7 +30,7 @@ def main():
             days = sys.argv[i + 1]
 
     if not skip_fetch:
-        run("fetch.py")
+        run("fetch.py", "--days", days)
     else:
         print("跳过抓取")
 

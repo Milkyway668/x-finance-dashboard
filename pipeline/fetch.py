@@ -53,7 +53,8 @@ def parse_num(s):
 def collect_ids(page, user):
     page.goto(f"https://x.com/{user}", wait_until="domcontentloaded", timeout=60000)
     page.wait_for_timeout(random.randint(3500, 5500))
-    for _ in range(8):
+    rounds = max(8, (MAX_TWEETS + 3) // 4)   # 30 条需要比 7 条多滚几屏
+    for _ in range(rounds):
         page.mouse.wheel(0, random.randint(800, 1400))
         page.wait_for_timeout(random.randint(1500, 3000))
     ids = []
@@ -209,8 +210,29 @@ def fetch_root(page, uid, user):
     return parts
 
 
+def parse_args(argv):
+    """支持: python fetch.py [账号...] [--days 30] [--max 30]"""
+    global MAX_DAYS, MAX_TWEETS
+    users, days_set, max_set = [], False, False
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--days" and i + 1 < len(argv):
+            MAX_DAYS = int(argv[i + 1]); days_set = True; i += 2
+        elif a == "--max" and i + 1 < len(argv):
+            MAX_TWEETS = int(argv[i + 1]); max_set = True; i += 2
+        elif a.startswith("--"):
+            i += 1
+        else:
+            users.append(a); i += 1
+    if days_set and not max_set:          # 未单独指定条数时，按天数给一个合理上限
+        MAX_TWEETS = max(7, min(50, MAX_DAYS))
+    return users or ACCOUNTS
+
+
 def main():
-    users = sys.argv[1:] or ACCOUNTS
+    users = parse_args(sys.argv[1:])
+    log(f"抓取口径：最近 {MAX_DAYS} 天，每账号最多 {MAX_TWEETS} 条")
     result = {}
     with sync_playwright() as p:
         ctx = p.chromium.launch_persistent_context(
