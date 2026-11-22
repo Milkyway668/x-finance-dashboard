@@ -4,7 +4,8 @@
 
 把 8 个 X（Twitter）投研账号的推文，自动翻译成中文、按主题归类、生成中文短评，做成一个每天早上一眼看完的静态看板。
 
-> 演示数据抓取时间：2026-11-22。当前收录 8 个账号、56 条推文。
+> 演示数据抓取时间：2026-11-22。当前为近 7 天口径：2026-11-18 ~ 11-22，45 条推文
+> （近 7 天有更新的 7 个账号；监控列表仍为 8 个账号）。
 
 ---
 
@@ -52,7 +53,8 @@
 一键运行：
 
 ```bash
-python pipeline/update_all.py            # 完整流程（含抓取）
+python pipeline/update_all.py            # 完整流程（含抓取，默认近 7 天）
+python pipeline/update_all.py --days 30  # 改为近 30 天口径
 python pipeline/update_all.py --no-fetch # 跳过抓取，重跑翻译与短评
 ```
 
@@ -90,6 +92,8 @@ pipeline/               数据管线
   fetch.py              抓取（含完整性校验）
   translate_new.py      新推文翻译 + 主题初判
   merge_new.py          合并进 data.js
+  prune_days.py         裁剪到最近 N 天，清理失效引用
+  range_ui.py           把短评注入 data.js
   retranslate.py        修补翻译不完整的条目
   gen_summaries.py      分类/账号的专题短评
   gen_range_digest.py   各时间范围的短评
