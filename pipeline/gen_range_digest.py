@@ -64,7 +64,7 @@ def main():
 
     out = {}
     for key_name, days, label in [("1", 1, "今天"), ("3", 3, "最近 3 天"),
-                                  ("7", 7, "最近 7 天"), ("all", "all", "全部")]:
+                                  ("7", 7, "最近 7 天"), ("30", 30, "最近 30 天"), ("all", "all", "全部")]:
         items = within(days)
         lines = []
         for d in items:

@@ -31,7 +31,7 @@ def load_accounts():
 
 ACCOUNTS = load_accounts()
 
-MAX_TWEETS = 6
+MAX_TWEETS = 30
 MAX_THREAD = 8
 
 
@@ -52,8 +52,8 @@ def parse_num(s):
 def collect_ids(page, user):
     page.goto(f"https://x.com/{user}", wait_until="domcontentloaded", timeout=60000)
     page.wait_for_timeout(random.randint(3500, 5500))
-    for _ in range(3):
-        page.mouse.wheel(0, random.randint(900, 1500))
+    for _ in range(8):
+        page.mouse.wheel(0, random.randint(800, 1400))
         page.wait_for_timeout(random.randint(1500, 3000))
     ids = []
     arts = page.locator('article[data-testid="tweet"]')
