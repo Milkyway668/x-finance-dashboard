@@ -290,8 +290,8 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15p
       <select class="rangesel" id="rangeSel" aria-label="时间范围">
         <option value="1">今天</option>
         <option value="3">最近 3 天</option>
-        <option value="7">最近 7 天</option>
-        <option value="30" selected>最近 30 天</option>
+        <option value="7" selected>最近 7 天</option>
+        <option value="30">最近 30 天</option>
         <option value="all">全部</option>
       </select></div>
 
@@ -338,7 +338,7 @@ DATA.forEach(d => d.tweets.forEach(t => {
   if (id) TID2TOP[id] = d.id;
 }));
 const el=s=>document.querySelector(s);
-let fTheme="全部",fAcc="全部",q="",rangeDays=30;
+let fTheme="全部",fAcc="全部",q="",rangeDays=7;
 
 /* ---------- 两条分类条：账号 / 主题 ---------- */
 
