@@ -263,6 +263,10 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15p
 .refreshbtn:hover{border-color:#C3CDDC;color:var(--ink)}
 .refreshbtn:disabled{color:var(--ink-3);cursor:default}
 .exportmenu{margin-left:0}
+
+.ava{width:26px;height:26px;border-radius:50%;flex:0 0 26px;display:grid;place-items:center;
+  color:#fff;font-size:11.5px;font-weight:700;letter-spacing:.3px}
+.ava.lg{width:44px;height:44px;flex:0 0 44px;font-size:16px}
 </style>
 </head>
 <body>
@@ -317,6 +321,7 @@ const SUMMARIZE_URL = "https://x-digest-api.2724314528.workers.dev";
 </script>
 <script src="data.js"></script>
 <script>
+const AVA_COLORS=["#2F5D9E","#6B4FA0","#1B7F79","#7A6A5A","#A8492F","#4A6FA5","#5C7A6B","#8A6E52"];
 const THEMES={"宏观":"#7A6A5A","行业":"#2F5D9E","公司":"#1B7F79"};
 
 /* DATA 定义在 data.js */
@@ -333,7 +338,7 @@ DATA.forEach(d => d.tweets.forEach(t => {
   if (id) TID2TOP[id] = d.id;
 }));
 const el=s=>document.querySelector(s);
-let fTheme="全部",fAcc="全部",q="",rangeDays=7;
+let fTheme="全部",fAcc="全部",q="",rangeDays=30;
 
 /* ---------- 两条分类条：账号 / 主题 ---------- */
 
@@ -348,9 +353,9 @@ function buildBars(){
   const accs=Object.keys(ac).sort((a,b)=>ac[b]-ac[a]);
   el("#accList").innerHTML =
     `` +
-    accs.map(a=>`
+    accs.map((a,i)=>`
       <button class="sitem ${fAcc===a?"on":""}" data-acc="${a}" title="@${a}">
-        <img src="assets/avatars/${a}.jpg" alt="" onerror="this.style.visibility='hidden'">
+        <span class="ava" style="background:${AVA_COLORS[i%AVA_COLORS.length]}">${(ACC_NAMES[a]||a).replace(/[^A-Za-z一-龥]/g,"").slice(0,1).toUpperCase()}</span>
         <span class="nm">${ACC_NAMES[a]||a}</span>
       </button>`).join("");
 
@@ -441,7 +446,7 @@ function updateDigestVisibility(){
     const tw=sel.reduce((a,d)=>a+d.tweets.length,0);
     head.hidden=false;
     head.innerHTML=`<div class="acctop">
-        <img src="assets/avatars/${fAcc}.jpg" alt="" onerror="this.style.visibility='hidden'">
+        <span class="ava lg" style="background:#0B2A5B">${name.replace(/[^A-Za-z一-龥]/g,"").slice(0,1).toUpperCase()}</span>
         <div><h2>${name}</h2><div class="h">@${fAcc}</div></div>
         <div class="cnt">${tw} 条推文</div>
       </div>${tw? `<div class="accsum">${summaryBlock("@" + fAcc)}</div>` : `<div class="accsum sumempty">该范围内暂无推文</div>`}`;
@@ -549,8 +554,9 @@ function digestTitle(){
 }
 function currentDigest(){
   const k = String(rangeDays);
-  if (typeof DIGEST_BY_RANGE !== "undefined" && DIGEST_BY_RANGE[k] && DIGEST_BY_RANGE[k].paragraphs)
-    return DIGEST_BY_RANGE[k];
+  const R = (typeof DIGEST_BY_RANGE !== "undefined") ? DIGEST_BY_RANGE : {};
+  if (R[k] && R[k].paragraphs) return R[k];
+  if (k === "30" && R["all"] && R["all"].paragraphs) return R["all"];  // 30 天未单独生成时用全量
   return DIGEST;
 }
 
