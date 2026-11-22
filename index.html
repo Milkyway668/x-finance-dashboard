@@ -286,7 +286,8 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15p
       <select class="rangesel" id="rangeSel" aria-label="时间范围">
         <option value="1">今天</option>
         <option value="3">最近 3 天</option>
-        <option value="7" selected>最近 7 天</option>
+        <option value="7">最近 7 天</option>
+        <option value="30" selected>最近 30 天</option>
         <option value="all">全部</option>
       </select></div>
 
@@ -544,7 +545,7 @@ function summaryBlock(key){
 
 function digestTitle(){
   const k=String(rangeDays);
-  return {"1":"今日短评","3":"近三日短评","7":"近七日短评","all":"全部短评"}[k] || "短评";
+  return {"1":"今日短评","3":"近三日短评","7":"近七日短评","30":"近一月短评","all":"全部短评"}[k] || "短评";
 }
 function currentDigest(){
   const k = String(rangeDays);
@@ -610,6 +611,10 @@ function exportAs(fmt){
 }
 
 const REFRESH_API = "http://127.0.0.1:8787";
+function isLocalHost(){
+  const h = location.hostname;
+  return h === "" || h === "localhost" || h === "127.0.0.1";
+}
 async function refreshLatest(){
   const btn = document.getElementById("btnRefresh");
   if(!btn) return;
@@ -703,6 +708,10 @@ if ("IntersectionObserver" in window){
   ["digest","flow"].forEach(id=>{const e2=document.getElementById(id); if(e2) obs.observe(e2);});
 }
 
+if(!isLocalHost()){
+  const rb = document.getElementById("btnRefresh");
+  if(rb) rb.style.display = "none";   // 线上版本不展示“抓取最新”，它依赖本机服务
+}
 renderDigest(); buildBars(); updateDigestVisibility(); render();
 </script>
 </body>
