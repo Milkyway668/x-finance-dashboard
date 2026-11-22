@@ -10,7 +10,7 @@
 4. 完整性校验：尾部省略号 / 长度恰为 280 / 订阅墙 / 纯图片 都要打标记
 """
 import os, re, json, time, random, sys
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from playwright.sync_api import sync_playwright
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -31,8 +31,9 @@ def load_accounts():
 
 ACCOUNTS = load_accounts()
 
-MAX_TWEETS = 30
+MAX_TWEETS = 7
 MAX_THREAD = 8
+MAX_DAYS = 7          # 只取最近 N 天内的推文（置顶旧帖会被跳过）
 
 
 def log(*a):
@@ -56,6 +57,7 @@ def collect_ids(page, user):
         page.mouse.wheel(0, random.randint(800, 1400))
         page.wait_for_timeout(random.randint(1500, 3000))
     ids = []
+    cutoff = datetime.now(timezone.utc) - timedelta(days=MAX_DAYS)
     arts = page.locator('article[data-testid="tweet"]')
     for i in range(arts.count()):
         try:
@@ -63,8 +65,16 @@ def collect_ids(page, user):
         except Exception:
             continue
         m = re.search(r"/([^/]+)/status/(\d+)", link)
-        if m and m.group(1).lower() == user.lower() and m.group(2) not in ids:
-            ids.append(m.group(2))
+        if not m or m.group(1).lower() != user.lower() or m.group(2) in ids:
+            continue
+        # 按推文时间过滤：超过 MAX_DAYS 的（含置顶旧帖）跳过
+        try:
+            dt = arts.nth(i).locator("time").first.get_attribute("datetime", timeout=600) or ""
+            if dt and datetime.fromisoformat(dt.replace("Z", "+00:00")) < cutoff:
+                continue
+        except Exception:
+            pass
+        ids.append(m.group(2))
         if len(ids) >= MAX_TWEETS:
             break
     return ids

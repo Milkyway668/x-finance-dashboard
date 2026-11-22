@@ -24,6 +24,10 @@ def run(script, *args):
 
 def main():
     skip_fetch = "--no-fetch" in sys.argv
+    days = "7"
+    for i, a in enumerate(sys.argv):
+        if a == "--days" and i + 1 < len(sys.argv):
+            days = sys.argv[i + 1]
 
     if not skip_fetch:
         run("fetch.py")
@@ -32,6 +36,7 @@ def main():
 
     run("translate_new.py")      # 只翻新增（已存在的会跳过）
     run("merge_new.py")          # 合并进 data.js
+    run("prune_days.py", days)   # 只保留最近 N 天
     run("retranslate.py")        # 修补“摘要冒充翻译”的条目
     run("repair_data.py")        # 去重常量声明，保证 data.js 结构干净
     run("gen_summaries.py")      # 每个分类/账号的专题短评
@@ -57,7 +62,7 @@ def main():
         raise SystemExit("\n[中止] 有结论未能溯源，请人工检查后再发布")
 
     # 把范围数据注入 data.js，并再次清理
-    run("_range_ui.py")
+    run("range_ui.py")
     run("repair_data.py")
 
     print("\n完成。刷新页面即可看到新内容。")
