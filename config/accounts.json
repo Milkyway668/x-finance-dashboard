@@ -1,0 +1,13 @@
+{
+  "accounts": [
+    "aleabitoreddit",
+    "SemiAnalysis_",
+    "Omercheema",
+    "OrnnExchange",
+    "HedgeyeTech",
+    "RYANHINGSHING",
+    "FredaDuan",
+    "TMTLongShort"
+  ],
+  "note": "在这里增删要监控的 X 账号（只填 @ 后面的名字），保存后运行 python pipeline/fetch.py 即可抓取。看板的账号筛选会自动出现新账号，无需改代码。"
+}

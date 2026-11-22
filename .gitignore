@@ -1,0 +1,31 @@
+# ==== 绝不能提交 ====
+.env
+*.key
+*.pem
+.fix_proxy/
+.browser/
+_check.js
+
+# ==== 中间数据 ====
+data/
+node_modules/
+worker/node_modules/
+worker/.wrangler/
+
+# ==== 备份与临时 ====
+*.bak
+*.bak-*
+*.log
+*.png
+!assets/**/*.png
+!assets/**/*.jpg
+
+# ==== 系统 ====
+.DS_Store
+Thumbs.db
+
+# 一次性修补脚本
+**/_*.py
+
+# 临时脚本
+.scratch/

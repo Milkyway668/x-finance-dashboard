@@ -1,0 +1,262 @@
+"""
+完整性优先的 X 抓取器
+用法: python fetch.py [账号1 账号2 ...]
+输出: data/fetch_<时间>.json + 控制台完整性报告
+
+关键策略：
+1. 时间线只取推文 ID（时间线正文必定被截断）
+2. 每条推文打开自己的详情页取全文（详情页给的是完整内容）
+3. 串文：先在根推页面收集同作者后续推文 ID，再逐条打开取全文
+4. 完整性校验：尾部省略号 / 长度恰为 280 / 订阅墙 / 纯图片 都要打标记
+"""
+import os, re, json, time, random, sys
+from datetime import datetime
+from playwright.sync_api import sync_playwright
+
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROFILE = os.path.join(ROOT, ".browser", "profile")
+OUTDIR = os.path.join(ROOT, "data")
+os.makedirs(OUTDIR, exist_ok=True)
+
+def load_accounts():
+    """账号列表来自 config/accounts.json，新增账号只需改那个文件"""
+    cfg = os.path.join(ROOT, "config", "accounts.json")
+    try:
+        return json.load(open(cfg, encoding="utf-8"))["accounts"]
+    except Exception:
+        return ["aleabitoreddit", "SemiAnalysis_", "Omercheema", "OrnnExchange",
+                "HedgeyeTech", "RYANHINGSHING", "FredaDuan", "TMTLongShort"]
+
+ACCOUNTS = load_accounts()
+
+MAX_TWEETS = 6
+MAX_THREAD = 8
+
+
+def log(*a):
+    print(*a, flush=True)
+
+
+def parse_num(s):
+    if not s:
+        return None
+    s = s.strip().replace(",", "")
+    m = re.match(r"([\d.]+)([KMB]?)", s)
+    if not m:
+        return None
+    return int(float(m.group(1)) * {"": 1, "K": 1e3, "M": 1e6, "B": 1e9}[m.group(2)])
+
+
+def collect_ids(page, user):
+    page.goto(f"https://x.com/{user}", wait_until="domcontentloaded", timeout=60000)
+    page.wait_for_timeout(random.randint(3500, 5500))
+    for _ in range(3):
+        page.mouse.wheel(0, random.randint(900, 1500))
+        page.wait_for_timeout(random.randint(1500, 3000))
+    ids = []
+    arts = page.locator('article[data-testid="tweet"]')
+    for i in range(arts.count()):
+        try:
+            link = arts.nth(i).locator('a[href*="/status/"]').first.get_attribute("href", timeout=800) or ""
+        except Exception:
+            continue
+        m = re.search(r"/([^/]+)/status/(\d+)", link)
+        if m and m.group(1).lower() == user.lower() and m.group(2) not in ids:
+            ids.append(m.group(2))
+        if len(ids) >= MAX_TWEETS:
+            break
+    return ids
+
+
+def open_detail(page, tid):
+    page.goto(f"https://x.com/i/web/status/{tid}", wait_until="domcontentloaded", timeout=60000)
+    page.wait_for_timeout(random.randint(3500, 5000))
+
+
+def article_for(page, tid):
+    loc = page.locator(f'article[data-testid="tweet"]:has(a[href*="/status/{tid}"])')
+    if loc.count():
+        return loc.first
+    arts = page.locator('article[data-testid="tweet"]')
+    return arts.first if arts.count() else None
+
+
+def read_article(art):
+    d = {"text": "", "media": 0, "video": 0, "likes": None,
+         "retweets": None, "replies": None, "time": "", "url": ""}
+    try:
+        href = art.locator('a[href*="/status/"]').first.get_attribute("href", timeout=1000) or ""
+        m = re.search(r"/status/(\d+)", href)
+        if m:
+            d["url"] = "https://x.com/i/status/" + m.group(1)
+    except Exception:
+        pass
+    try:
+        d["time"] = art.locator("time").first.get_attribute("datetime") or ""
+    except Exception:
+        pass
+    for k, sel in (("likes", '[data-testid="like"]'), ("retweets", '[data-testid="retweet"]'),
+                   ("replies", '[data-testid="reply"]')):
+        try:
+            d[k] = parse_num(art.locator(sel).inner_text(timeout=800))
+        except Exception:
+            d[k] = None
+    try:
+        d["media"] = art.locator('[data-testid="tweetPhoto"]').count()
+    except Exception:
+        pass
+    try:
+        d["video"] = art.locator('video, [data-testid="videoPlayer"]').count()
+    except Exception:
+        pass
+    # 先尝试点开「显示更多」（X 用纯文字节点，不是固定 testid）
+    try:
+        art.evaluate("""el => {
+          const t = ['显示更多','Show more','查看更多'];
+          [...el.querySelectorAll('*')]
+            .filter(e => e.children.length === 0 && t.includes(e.textContent.trim()))
+            .forEach(e => { try { e.click(); } catch (_) {} });
+        }""")
+    except Exception:
+        pass
+
+    # 正文：引用推文时内容在嵌套节点里，取第一个非空的
+    texts = []
+    try:
+        loc = art.locator('[data-testid="tweetText"]')
+        for i in range(min(loc.count(), 3)):
+            try:
+                v = loc.nth(i).inner_text(timeout=1500)
+            except Exception:
+                v = ""
+            if v.strip():
+                texts.append(v)
+    except Exception:
+        pass
+    d["text"] = texts[0] if texts else ""
+    d["quoted"] = len(texts) > 1
+    return d
+
+
+def thread_part_ids(page, root_id, user):
+    ids = []
+    arts = page.locator('article[data-testid="tweet"]')
+    for i in range(arts.count()):
+        try:
+            link = arts.nth(i).locator('a[href*="/status/"]').first.get_attribute("href", timeout=800) or ""
+        except Exception:
+            continue
+        m = re.search(r"/([^/]+)/status/(\d+)", link)
+        if m and m.group(1).lower() == user.lower() and m.group(2) != root_id and m.group(2) not in ids:
+            ids.append(m.group(2))
+    return ids[:MAX_THREAD - 1]
+
+
+def completeness(tw, tombstone=False):
+    f = []
+    t = tw["text"].strip()
+    if tombstone:
+        f.append("subscriber_only")
+    if not t:
+        f.append("media_only" if (tw["media"] or tw["video"]) else "empty")
+        return f
+    if t.endswith("…") or t.endswith("..."):
+        f.append("ellipsis_tail")
+    if len(t) in (278, 279, 280):
+        f.append("len_280")
+    return f
+
+
+def fetch_root(page, uid, user):
+    open_detail(page, uid)
+    body = page.inner_text("body")[:3000]
+    tomb = ("Subscribers only" in body) or ("订阅者专属" in body) or ("訂閱者專屬" in body)
+
+    part_ids = thread_part_ids(page, uid, user)
+    parts = []
+
+    art = article_for(page, uid)
+    tw = read_article(art) if art else {"text": "", "media": 0, "video": 0,
+                                        "likes": None, "retweets": None, "replies": None,
+                                        "time": "", "url": ""}
+    tw["id"] = uid
+    tw["flags"] = completeness(tw, tomb)
+    parts.append(tw)
+
+    for pid in part_ids:
+        open_detail(page, pid)
+        a = article_for(page, pid)
+        if not a:
+            continue
+        t2 = read_article(a)
+        t2["id"] = pid
+        t2["flags"] = completeness(t2, tomb)
+        parts.append(t2)
+        time.sleep(random.randint(2, 4))
+
+    return parts
+
+
+def main():
+    users = sys.argv[1:] or ACCOUNTS
+    result = {}
+    with sync_playwright() as p:
+        ctx = p.chromium.launch_persistent_context(
+            PROFILE, headless=True,
+            proxy={"server": "http://127.0.0.1:7890"},
+            viewport={"width": 1280, "height": 1200},
+            user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+
+        for u in users:
+            log(f"\n=== @{u}")
+            try:
+                ids = collect_ids(page, u)
+            except Exception as e:
+                log("  收集 ID 失败:", str(e)[:80]); result[u] = []; continue
+            log(f"  时间线取到 {len(ids)} 条")
+            items = []
+            for uid in ids:
+                try:
+                    parts = fetch_root(page, uid, u)
+                    items.append({"root_id": uid, "parts": parts})
+                    bad = sum(1 for x in parts if x["flags"])
+                    log(f"   - {uid}  {len(parts)} 段" + (f"  [!] {bad} 段异常" if bad else "  OK"))
+                except Exception as e:
+                    log(f"   - {uid}  ERROR {str(e)[:70]}")
+                time.sleep(random.randint(2, 4))
+            result[u] = items
+        ctx.close()
+
+    stamp = datetime.now().strftime("%Y%m%d_%H%M")
+    path = os.path.join(OUTDIR, f"fetch_{stamp}.json")
+    json.dump(result, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+
+    log("\n" + "=" * 46)
+    log("完整性报告")
+    log("=" * 46)
+    total = ok = 0
+    issues = []
+    for u, items in result.items():
+        for it in items:
+            for pt in it["parts"]:
+                total += 1
+                if pt["flags"]:
+                    issues.append((u, pt["id"], pt["flags"], len(pt["text"])))
+                else:
+                    ok += 1
+    for u, tid, fl, ln in issues:
+        log(f"  [!] @{u} {tid}  {','.join(fl)}  ({ln} 字)")
+    log(f"\n共 {total} 段，完整 {ok} 段，异常 {total - ok} 段")
+    log("保存:", path)
+    if issues:
+        log("\n有异常条目，需要人工确认后再翻译。")
+
+
+if __name__ == "__main__":
+    main()

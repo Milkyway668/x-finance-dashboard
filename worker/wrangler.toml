@@ -1,0 +1,10 @@
+name = "x-digest-api"
+main = "worker.js"
+compatibility_date = "2026-11-01"
+
+# 环境变量请在 Cloudflare 后台或命令行设置，不要写在这里：
+#   wrangler secret put DEEPSEEK_API_KEY
+#   wrangler secret put ALLOWED_ORIGIN
+#
+# [vars]
+# ALLOWED_ORIGIN = "https://你的用户名.github.io"
