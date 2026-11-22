@@ -211,6 +211,9 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15p
 .acctop .h{font-size:12px;color:var(--ink-3);margin-top:2px}
 .acctop .cnt{margin-left:auto;font-size:12px;color:var(--ink-3);font-family:var(--mono)}
 .accsum{margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+.livehint{font-size:11.5px;color:var(--ink-3);margin-bottom:8px}
+.livehint.ok{margin:10px 0 0}
+.livehint.fail{color:#A8492F;margin:10px 0 0}
 .sumintro{font-size:14px;color:var(--ink-2);line-height:1.75;margin-bottom:10px}
 .sump{font-size:14.5px;line-height:1.8;color:#1F2937;margin:0 0 12px;max-width:1000px}
 .sump strong{font-weight:680;color:#0B2A5B}
@@ -547,6 +550,58 @@ function summaryBlock(key){
     s = SUMMARIES[key+"|"+String(rangeDays)] || SUMMARIES[key] || null;
   }
   return s ? summaryHtml(s) : "";
+}
+
+/* ---------- 实时生成短评（Cloudflare Worker） ----------
+   先显示预生成内容，后台请求 Worker，成功后替换；失败则保留预生成内容。 */
+let liveSeq = 0;
+function liveItemsFor(key){
+  const byTheme = key[0] !== "@";
+  const acc = byTheme ? key : key.slice(1);
+  const rows = DATA.filter(d => (byTheme ? d.themes.includes(acc) : d.accounts.includes(acc)))
+                   .filter(inRange)
+                   .slice().sort((a,b)=> b.date.localeCompare(a.date));
+  const items = [];
+  rows.forEach(d => d.tweets.forEach(t => {
+    const id = (t.url||"").split("/").filter(Boolean).pop();
+    if (id) items.push({id, account: d.accounts[0], date: d.date, text: t.zh || t.en || ""});
+  }));
+  return items;
+}
+async function liveSummary(key){
+  const box = document.querySelector("#accHead .accsum");
+  if (!box || typeof SUMMARIZE_URL!=="string") return;
+  const items = liveItemsFor(key);
+  if (!items.length) return;
+
+  const seq = ++liveSeq;
+  const original = box.innerHTML;
+  box.insertAdjacentHTML("afterbegin",
+    '<div class="livehint">正在根据当前范围实时生成…</div>');
+
+  try{
+    const ctrl = new AbortController();
+    const timer = setTimeout(()=>ctrl.abort(), 20000);
+    const r = await fetch(SUMMARIZE_URL, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({label: key, items: items.slice(0, 60)}),
+      signal: ctrl.signal
+    });
+    clearTimeout(timer);
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const s = await r.json();
+    if (seq !== liveSeq) return;
+    if (!s || !Array.isArray(s.paragraphs) || !s.paragraphs.length) throw new Error("empty");
+    box.innerHTML = summaryHtml(s) +
+      `<div class="livehint ok">实时生成 · 依据当前范围 ${Math.min(items.length,60)} 条推文</div>`;
+  }catch(e){
+    if (seq !== liveSeq) return;
+    box.innerHTML = original;
+    box.insertAdjacentHTML("beforeend",
+      '<div class="livehint fail">实时生成暂不可用，已显示预生成短评</div>');
+    console.warn("liveSummary:", e && e.message ? e.message : e);
+  }
 }
 
 function digestTitle(){
