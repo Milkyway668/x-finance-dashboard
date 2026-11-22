@@ -144,6 +144,8 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15p
   font-size:13.5px;color:var(--ink-2);transition:.14s;width:100%}
 .sitem:hover{background:#EDF0F5}
 .sitem.on{background:#ECEEF1;color:var(--ink);font-weight:650}
+.sitem.zero .ava{opacity:.45;filter:grayscale(1)}
+.sitem.zero .nm{color:var(--ink-3)}
 .sitem img{width:26px;height:26px;border-radius:50%;object-fit:cover;flex:0 0 26px;background:#E6E9EF}
 .sitem .ic{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;
   background:#0B2A5B;color:#fff;font-size:13px;flex:0 0 26px}
@@ -279,7 +281,7 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15p
   <div class="top">
     <div class="brand">
       <h1>X 金融信息看板</h1>
-      <span class="bstats"><b id="sAcc">0</b> 个账号 · <b id="sTw">0</b> 条推文 · 更新于 11-22 14:45</span>
+      <span class="bstats"><b id="sAcc">0</b> 个账号 · <b id="sTw">0</b> 条推文 · <span id="sUpd">更新于 --</span></span>
     </div>
 
   </div>
@@ -326,6 +328,8 @@ const SUMMARIZE_URL = "https://x-digest-api.2724314528.workers.dev";
 <script src="data.js"></script>
 <script>
 const AVA_COLORS=["#2F5D9E","#6B4FA0","#1B7F79","#7A6A5A","#A8492F","#4A6FA5","#5C7A6B","#8A6E52"];
+/* 监控名单以 ACC_NAMES 为准：即使某账号当前范围没有推文，也要出现在账号栏 */
+const MONITORED = (typeof ACC_NAMES!=="undefined" && ACC_NAMES) ? Object.keys(ACC_NAMES) : [];
 const THEMES={"宏观":"#7A6A5A","行业":"#2F5D9E","公司":"#1B7F79"};
 
 /* DATA 定义在 data.js */
@@ -354,11 +358,12 @@ function buildBars(){
   });
 
   // 左侧账号栏
-  const accs=Object.keys(ac).sort((a,b)=>ac[b]-ac[a]);
+  const accs=(MONITORED.length?MONITORED.slice():Object.keys(ac))
+    .sort((a,b)=>(ac[b]||0)-(ac[a]||0)||a.localeCompare(b));
   el("#accList").innerHTML =
     `` +
     accs.map((a,i)=>`
-      <button class="sitem ${fAcc===a?"on":""}" data-acc="${a}" title="@${a}">
+      <button class="sitem ${fAcc===a?"on":""} ${ac[a]?"":"zero"}" data-acc="${a}" title="@${a}${ac[a]?"":"（当前范围无推文）"}">
         <span class="ava" style="background:${AVA_COLORS[i%AVA_COLORS.length]}">${(ACC_NAMES[a]||a).replace(/[^A-Za-z一-龥]/g,"").slice(0,1).toUpperCase()}<img src="assets/avatars/${a}.jpg" alt="" loading="lazy" onerror="this.remove()"></span>
         <span class="nm">${ACC_NAMES[a]||a}</span>
       </button>`).join("");
@@ -438,7 +443,7 @@ function updateDigestVisibility(){
   if(fAcc==="全部" && fTheme==="全部"){
     digest.hidden=false; head.hidden=true;
     head.innerHTML="";
-    el("#sAcc").textContent=new Set(DATA.flatMap(d=>d.accounts)).size;
+    el("#sAcc").textContent=MONITORED.length||new Set(DATA.flatMap(d=>d.accounts)).size;
     el("#sTw").textContent=DATA.reduce((a,d)=>a+d.tweets.length,0);
   }else if(fAcc!=="全部"){
     digest.hidden=true;
@@ -738,8 +743,10 @@ function renderDigest(){
       </p>`).join("")}
     <div class="dnote">${D.note||""}</div></div>`;
 }
-el("#sAcc").textContent=new Set(DATA.flatMap(d=>d.accounts)).size;
+el("#sAcc").textContent=MONITORED.length||new Set(DATA.flatMap(d=>d.accounts)).size;
 el("#sTw").textContent=DATA.reduce((a,d)=>a+d.tweets.length,0);
+const upd=document.getElementById("sUpd");
+if(upd) upd.textContent="更新于 "+latestDate().slice(5);
 
 document.addEventListener("click", e => {
   const j = e.target.closest(".jump"); if (!j) return;
