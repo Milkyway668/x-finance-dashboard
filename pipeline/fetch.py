@@ -10,7 +10,7 @@
 4. 完整性校验：尾部省略号 / 长度恰为 280 / 订阅墙 / 纯图片 都要打标记
 """
 import os, re, json, time, random, sys
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
 from playwright.sync_api import sync_playwright
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -50,6 +50,90 @@ def parse_num(s):
     return int(float(m.group(1)) * {"": 1, "K": 1e3, "M": 1e6, "B": 1e9}[m.group(2)])
 
 
+CANON_RE = re.compile(r"^/([^/]+)/status/(\d+)$")
+
+
+def canon_link(art):
+    """返回 (作者, 推文ID, 时间文字)。
+
+    X 在 2026-11 改成服务端直出 HTML：没有 data-testid，也没有 <time>。
+    每条推文里唯一指向自己的规范链接是 /<user>/status/<id>（照片/analytics 链接带后缀）。
+    """
+    try:
+        for a in art.locator("a[href*='/status/']").all():
+            href = a.get_attribute("href") or ""
+            m = CANON_RE.match(href)
+            if m:
+                return m.group(1), m.group(2), (a.inner_text() or "").strip()
+    except Exception:
+        pass
+    return None, None, ""
+
+
+def parse_time_text(txt):
+    """把 X 的时间文字转成 YYYY-MM-DD：3小时 / 7分钟 / 11月20日 / 2026年11月20日 / 昨天"""
+    if not txt:
+        return ""
+    now = datetime.now()
+    t = txt.strip()
+    m = re.search(r"(\d{4})年(\d{1,2})月(\d{1,2})日", t)
+    if m:
+        y, mo, d = map(int, m.groups())
+        try:
+            return date(y, mo, d).isoformat()
+        except ValueError:
+            return ""
+    m = re.search(r"(\d{1,2})月(\d{1,2})日", t)
+    if m:
+        mo, d = map(int, m.groups())
+        for y in (now.year, now.year - 1):
+            try:
+                dt = date(y, mo, d)
+                if dt <= now.date():
+                    return dt.isoformat()
+            except ValueError:
+                pass
+        return ""
+    if "昨天" in t:
+        return (now.date() - timedelta(days=1)).isoformat()
+    if "今天" in t or "现在" in t or "刚刚" in t:
+        return now.date().isoformat()
+    m = re.match(r"(\d+)\s*秒", t)
+    if m:
+        return (now - timedelta(seconds=int(m.group(1)))).date().isoformat()
+    m = re.match(r"(\d+)\s*分钟", t)
+    if m:
+        return (now - timedelta(minutes=int(m.group(1)))).date().isoformat()
+    m = re.match(r"(\d+)\s*小时", t)
+    if m:
+        return (now - timedelta(hours=int(m.group(1)))).date().isoformat()
+    m = re.match(r"(\d+)\s*天", t)
+    if m:
+        return (now.date() - timedelta(days=int(m.group(1)))).isoformat()
+    return ""
+
+
+def aria_numbers(art):
+    """从 aria-label 里取互动数：'14 回复、10 转帖、174 点赞、32249 次观看'"""
+    out = {"replies": None, "retweets": None, "likes": None}
+    try:
+        labels = art.locator("[aria-label]").evaluate_all("els=>els.map(e=>e.getAttribute('aria-label')||'')")
+    except Exception:
+        return out
+    joined = " ".join(labels)
+    for key, pat in (("replies", r"([\d,]+)\s*(?:条)?回复"),
+                     ("retweets", r"([\d,]+)\s*(?:次)?转帖"),
+                     ("likes", r"([\d,]+)\s*(?:次)?点赞")):
+        m = None
+        for lab in labels:
+            m = re.search(pat, lab)
+            if m:
+                break
+        if m:
+            out[key] = int(m.group(1).replace(",", ""))
+    return out
+
+
 def collect_ids(page, user):
     page.goto(f"https://x.com/{user}", wait_until="domcontentloaded", timeout=60000)
     page.wait_for_timeout(random.randint(3500, 5500))
@@ -58,71 +142,53 @@ def collect_ids(page, user):
         page.mouse.wheel(0, random.randint(800, 1400))
         page.wait_for_timeout(random.randint(1500, 3000))
     ids = []
-    cutoff = datetime.now(timezone.utc) - timedelta(days=MAX_DAYS)
-    arts = page.locator('article[data-testid="tweet"]')
+    cutoff = (datetime.now() - timedelta(days=MAX_DAYS)).date()
+    arts = page.locator("article")
     for i in range(arts.count()):
-        try:
-            link = arts.nth(i).locator('a[href*="/status/"]').first.get_attribute("href", timeout=800) or ""
-        except Exception:
+        author, tid, ttxt = canon_link(arts.nth(i))
+        if not tid or (author or "").lower() != user.lower() or tid in ids:
             continue
-        m = re.search(r"/([^/]+)/status/(\d+)", link)
-        if not m or m.group(1).lower() != user.lower() or m.group(2) in ids:
+        iso = parse_time_text(ttxt)
+        if iso and date.fromisoformat(iso) < cutoff:   # 超过时间窗口（含置顶旧帖）跳过
             continue
-        # 按推文时间过滤：超过 MAX_DAYS 的（含置顶旧帖）跳过
-        try:
-            dt = arts.nth(i).locator("time").first.get_attribute("datetime", timeout=600) or ""
-            if dt and datetime.fromisoformat(dt.replace("Z", "+00:00")) < cutoff:
-                continue
-        except Exception:
-            pass
-        ids.append(m.group(2))
+        ids.append(tid)
         if len(ids) >= MAX_TWEETS:
             break
     return ids
 
 
-def open_detail(page, tid):
-    page.goto(f"https://x.com/i/web/status/{tid}", wait_until="domcontentloaded", timeout=60000)
+def open_detail(page, tid, user):
+    # 新版前端下 /i/web/status/<id> 会空白，必须用 /<账号>/status/<id>
+    page.goto(f"https://x.com/{user}/status/{tid}", wait_until="domcontentloaded", timeout=60000)
     page.wait_for_timeout(random.randint(3500, 5000))
 
 
 def article_for(page, tid):
-    loc = page.locator(f'article[data-testid="tweet"]:has(a[href*="/status/{tid}"])')
-    if loc.count():
-        return loc.first
-    arts = page.locator('article[data-testid="tweet"]')
+    arts = page.locator("article")
+    for i in range(arts.count()):
+        _, aid, _ = canon_link(arts.nth(i))
+        if aid == tid:
+            return arts.nth(i)
     return arts.first if arts.count() else None
 
 
 def read_article(art):
     d = {"text": "", "media": 0, "video": 0, "likes": None,
          "retweets": None, "replies": None, "time": "", "url": ""}
+    _, tid, ttxt = canon_link(art)
+    if tid:
+        d["url"] = "https://x.com/i/status/" + tid
+    d["time"] = parse_time_text(ttxt)
+    d.update(aria_numbers(art))
     try:
-        href = art.locator('a[href*="/status/"]').first.get_attribute("href", timeout=1000) or ""
-        m = re.search(r"/status/(\d+)", href)
-        if m:
-            d["url"] = "https://x.com/i/status/" + m.group(1)
+        d["media"] = art.locator("img[src*='pbs.twimg.com/media']").count()
     except Exception:
         pass
     try:
-        d["time"] = art.locator("time").first.get_attribute("datetime") or ""
+        d["video"] = art.locator("video").count()
     except Exception:
         pass
-    for k, sel in (("likes", '[data-testid="like"]'), ("retweets", '[data-testid="retweet"]'),
-                   ("replies", '[data-testid="reply"]')):
-        try:
-            d[k] = parse_num(art.locator(sel).inner_text(timeout=800))
-        except Exception:
-            d[k] = None
-    try:
-        d["media"] = art.locator('[data-testid="tweetPhoto"]').count()
-    except Exception:
-        pass
-    try:
-        d["video"] = art.locator('video, [data-testid="videoPlayer"]').count()
-    except Exception:
-        pass
-    # 先尝试点开「显示更多」（X 用纯文字节点，不是固定 testid）
+    # 先尝试点开「显示更多」（X 用纯文字节点）
     try:
         art.evaluate("""el => {
           const t = ['显示更多','Show more','查看更多'];
@@ -133,10 +199,10 @@ def read_article(art):
     except Exception:
         pass
 
-    # 正文：引用推文时内容在嵌套节点里，取第一个非空的
+    # 正文：新版正文是 div[dir=auto][lang]；引用推文时会有第二个
     texts = []
     try:
-        loc = art.locator('[data-testid="tweetText"]')
+        loc = art.locator('div[dir="auto"][lang]')
         for i in range(min(loc.count(), 3)):
             try:
                 v = loc.nth(i).inner_text(timeout=1500)
@@ -153,15 +219,11 @@ def read_article(art):
 
 def thread_part_ids(page, root_id, user):
     ids = []
-    arts = page.locator('article[data-testid="tweet"]')
+    arts = page.locator("article")
     for i in range(arts.count()):
-        try:
-            link = arts.nth(i).locator('a[href*="/status/"]').first.get_attribute("href", timeout=800) or ""
-        except Exception:
-            continue
-        m = re.search(r"/([^/]+)/status/(\d+)", link)
-        if m and m.group(1).lower() == user.lower() and m.group(2) != root_id and m.group(2) not in ids:
-            ids.append(m.group(2))
+        author, tid, _ = canon_link(arts.nth(i))
+        if tid and (author or "").lower() == user.lower() and tid != root_id and tid not in ids:
+            ids.append(tid)
     return ids[:MAX_THREAD - 1]
 
 
@@ -181,7 +243,7 @@ def completeness(tw, tombstone=False):
 
 
 def fetch_root(page, uid, user):
-    open_detail(page, uid)
+    open_detail(page, uid, user)
     body = page.inner_text("body")[:3000]
     tomb = ("Subscribers only" in body) or ("订阅者专属" in body) or ("訂閱者專屬" in body)
 
@@ -197,7 +259,7 @@ def fetch_root(page, uid, user):
     parts.append(tw)
 
     for pid in part_ids:
-        open_detail(page, pid)
+        open_detail(page, pid, user)
         a = article_for(page, pid)
         if not a:
             continue
