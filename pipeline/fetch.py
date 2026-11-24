@@ -273,8 +273,8 @@ def fetch_root(page, uid, user):
 
 
 def parse_args(argv):
-    """支持: python fetch.py [账号...] [--days 30] [--max 30]"""
-    global MAX_DAYS, MAX_TWEETS
+    """支持: python fetch.py [账号...] [--days 30] [--max 30] [--fresh]"""
+    global MAX_DAYS, MAX_TWEETS, FRESH
     users, days_set, max_set = [], False, False
     i = 0
     while i < len(argv):
@@ -283,6 +283,8 @@ def parse_args(argv):
             MAX_DAYS = int(argv[i + 1]); days_set = True; i += 2
         elif a == "--max" and i + 1 < len(argv):
             MAX_TWEETS = int(argv[i + 1]); max_set = True; i += 2
+        elif a == "--fresh":
+            FRESH = True; i += 1
         elif a.startswith("--"):
             i += 1
         else:
@@ -293,11 +295,16 @@ def parse_args(argv):
 
 
 ARCHIVE = os.path.join(OUTDIR, "fetch_inprogress.json")
+FRESH = False
 
 
 def load_resume(users):
-    """读取上次中断时的存档：只复用 12 小时内的，且只复用本次要抓的账号"""
-    if not os.path.exists(ARCHIVE):
+    """读取存档：12 小时内可续跑。
+
+    保留存档里的**全部**账号（不只是本次要抓的），避免只重试个别账号时
+    把其他账号的数据从存档里挤掉。
+    """
+    if FRESH or not os.path.exists(ARCHIVE):
         return {}
     age = time.time() - os.path.getmtime(ARCHIVE)
     if age > 12 * 3600:
@@ -312,9 +319,10 @@ def load_resume(users):
         d = json.load(open(ARCHIVE, encoding="utf-8"))
     except Exception:
         return {}
-    done = {u: v for u, v in d.items() if u in users and v}
-    if done:
-        log("断点续跑：已跳过", ", ".join("@" + u for u in done))
+    done = {u: v for u, v in d.items() if v}
+    skipped = [u for u in users if u in done]
+    if skipped:
+        log("断点续跑：已跳过", ", ".join("@" + u for u in skipped))
     return done
 
 

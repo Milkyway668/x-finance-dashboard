@@ -70,21 +70,47 @@ def call(key, base, texts):
     return json.loads(out["choices"][0]["message"]["content"])
 
 
+def load_fetches():
+    """合并读取所有抓取文件（按修改时间旧→新，新的覆盖旧的）
+
+    不能只读最新一个：分批/重试抓取时，新文件可能只包含本次要抓的几个账号。
+    """
+    files = glob.glob(os.path.join(ROOT, "data", "fetch_*.json"))
+    files.append(os.path.join(ROOT, "data", "fetch_inprogress.json"))
+    exist = [f for f in files if os.path.exists(f)]
+    exist.sort(key=os.path.getmtime)
+    merged = {}
+    for f in exist:
+        try:
+            d = json.load(open(f, encoding="utf-8"))
+        except Exception:
+            continue
+        for user, items in d.items():
+            for it in items:
+                root = it.get("root_id")
+                if root:
+                    merged[(user, root)] = it
+    out = {}
+    for (user, root), it in merged.items():
+        out.setdefault(user, []).append(it)
+    print(f"读取 {len(exist)} 个抓取文件，合并后 {len(merged)} 组", flush=True)
+    return out
+
+
 def main():
     env = load_env()
     key = env["DEEPSEEK_API_KEY"]; base = env.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-    cands = glob.glob(os.path.join(ROOT, "data", "fetch_*.json")) +         glob.glob(os.path.join(ROOT, "data", "fetch_inprogress.json"))
-    src = max(cands, key=os.path.getmtime)
-    data = json.load(open(src, encoding="utf-8"))
+    data = load_fetches()
     done = existing_ids()
 
     results = []
+    seen_parts = set()
     for user, items in data.items():
         for it in items:
             root = it["root_id"]
             if root in done:
                 continue
-            parts = [p for p in it["parts"] if p.get("text", "").strip()]
+            parts = [p for p in it["parts"] if p.get("text", "").strip() and p.get("id") not in seen_parts]
             if not parts:
                 continue
             texts = [p["text"] for p in parts]
@@ -110,6 +136,7 @@ def main():
                     } for i, p in enumerate(parts)
                 ],
             })
+            seen_parts.update(p["id"] for p in parts)
             print(f"{user} {root} -> {r.get('title','')[:24]}", flush=True)
 
     out = os.path.join(ROOT, "data", "new_items.json")
