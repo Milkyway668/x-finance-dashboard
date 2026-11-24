@@ -230,10 +230,36 @@ def parse_args(argv):
     return users or ACCOUNTS
 
 
+ARCHIVE = os.path.join(OUTDIR, "fetch_inprogress.json")
+
+
+def load_resume(users):
+    """读取上次中断时的存档：只复用 12 小时内的，且只复用本次要抓的账号"""
+    if not os.path.exists(ARCHIVE):
+        return {}
+    age = time.time() - os.path.getmtime(ARCHIVE)
+    if age > 12 * 3600:
+        stale = ARCHIVE.replace(".json", "_stale_%s.json" % datetime.now().strftime("%m%d_%H%M"))
+        try:
+            os.replace(ARCHIVE, stale)
+        except Exception:
+            pass
+        log("存档超过 12 小时，已另存为", os.path.basename(stale))
+        return {}
+    try:
+        d = json.load(open(ARCHIVE, encoding="utf-8"))
+    except Exception:
+        return {}
+    done = {u: v for u, v in d.items() if u in users and v}
+    if done:
+        log("断点续跑：已跳过", ", ".join("@" + u for u in done))
+    return done
+
+
 def main():
     users = parse_args(sys.argv[1:])
     log(f"抓取口径：最近 {MAX_DAYS} 天，每账号最多 {MAX_TWEETS} 条")
-    result = {}
+    result = load_resume(users)
     with sync_playwright() as p:
         ctx = p.chromium.launch_persistent_context(
             PROFILE, headless=True,
@@ -246,6 +272,9 @@ def main():
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
 
         for u in users:
+            if result.get(u):
+                log(f"\n=== @{u} 已在存档中，跳过")
+                continue
             log(f"\n=== @{u}")
             try:
                 ids = collect_ids(page, u)
@@ -265,8 +294,7 @@ def main():
             result[u] = items
             # 每完成一个账号就落盘，避免中断导致前面的抓取白费
             try:
-                tmp = os.path.join(OUTDIR, "fetch_inprogress.json")
-                json.dump(result, open(tmp, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+                json.dump(result, open(ARCHIVE, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
                 log(f"  [存档] 已保存 {len(result)} 个账号")
             except Exception as e:
                 log("  存档失败:", str(e)[:60])
