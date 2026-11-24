@@ -58,7 +58,9 @@ def main():
             continue
         have.update(seen_now)   # 防止同一条推文被后面的串文重复合并
         n += 1
-        date = (parts[0].get("time") or "")[:10]
+        # 串文组的日期取组内最新一条，而不是根推文（根推文可能很早或没有日期）
+        dates = [p.get("time") for p in parts if p.get("time")]
+        date = max(dates) if dates else (parts[0].get("time") or "")[:10]
         mmdd = date[5:]
         data.append({
             "id": "n%d" % (len(data) + 1),

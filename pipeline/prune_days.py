@@ -5,8 +5,8 @@
   避免页面出现死链接、也避免 verify_*.py 因来源缺失误报
 用法: python prune_days.py [天数]
 """
-import json, os, subprocess, sys
-from datetime import date, timedelta
+import json, os, re, subprocess, sys
+from datetime import date, timedelta, datetime
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -51,11 +51,69 @@ def main():
     if not data:
         raise SystemExit("DATA 为空，无法裁剪")
 
-    latest = max(date.fromisoformat(d["date"]) for d in data if d.get("date"))
+    def iso10(s):
+        m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", s or "")
+        if not m:
+            return None
+        try:
+            return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            return None
+
+    def tweet_date(d, t):
+        """兼容三种写法：t='MM-DD' / t='YYYY-MM-DDTHH:MM...' / 组 date 兜底"""
+        ti = (t.get("t") or "").strip()
+        dt = iso10(ti)
+        if dt:
+            return dt
+        base = iso10(d.get("date") or "")
+        if not re.match(r"^\d{2}-\d{2}$", ti):
+            return base
+        year = base.year if base else datetime.now().year
+        try:
+            dt = date(year, int(ti[:2]), int(ti[3:]))
+            if base and int(ti[:2]) - base.month > 6:
+                dt = dt.replace(year=dt.year - 1)
+            elif base and base.month - int(ti[:2]) > 6:
+                dt = dt.replace(year=dt.year + 1)
+            elif not base and dt > datetime.now().date() + timedelta(days=1):
+                dt = dt.replace(year=dt.year - 1)
+            return dt
+        except ValueError:
+            return None
+
+    all_dates = [x for d in data for t in d.get("tweets", []) if (x := tweet_date(d, t))]
+    if not all_dates:
+        raise SystemExit("无法解析任何推文日期，已中止")
+    latest = max(all_dates)
     cutoff = latest - timedelta(days=days - 1)
-    kept = [d for d in data if d.get("date") and date.fromisoformat(d["date"]) >= cutoff]
+
+    # 以组内每一条推文的日期为准裁剪，并按推文 ID 全局去重；
+    # 根推文可能很早或没有日期，不能因此丢掉整个串文组。
+    kept, seen = [], set()
+    for d in data:
+        tw = []
+        for t in d.get("tweets", []):
+            tid = t.get("url", "").rstrip("/").split("/")[-1]
+            dt = tweet_date(d, t)
+            if dt is None or dt < cutoff:   # 无法确定日期或超过窗口的条目剔除
+                continue
+            if tid in seen:
+                continue
+            seen.add(tid)
+            t["t"] = dt.strftime("%m-%d")   # 统一成 MM-DD，兼容旧格式
+            tw.append(t)
+        if not tw:
+            continue
+        d["tweets"] = tw
+        dates = sorted(x for t in tw if (x := tweet_date(d, t)))
+        if dates:
+            d["date"] = dates[-1].isoformat()
+            d["time"] = d["date"][5:]
+        kept.append(d)
+
     removed = len(data) - len(kept)
-    keep_ids = {t.get("url", "").rstrip("/").split("/")[-1] for d in kept for t in d.get("tweets", [])}
+    keep_ids = seen
 
     obj["DATA"] = kept
     obj["DIGEST"] = clean_summary(obj["DIGEST"], keep_ids)
