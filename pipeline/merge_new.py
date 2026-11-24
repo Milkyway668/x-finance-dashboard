@@ -47,9 +47,16 @@ def main():
 
     n = 0
     for it in keep:
-        parts = [p for p in it["parts"] if p.get("id") and p["id"] not in have and p.get("zh")]
+        parts, seen_now = [], set()
+        for p in it["parts"]:
+            pid = p.get("id")
+            if not pid or not p.get("zh") or pid in have or pid in seen_now:
+                continue
+            seen_now.add(pid)
+            parts.append(p)
         if not parts:
             continue
+        have.update(seen_now)   # 防止同一条推文被后面的串文重复合并
         n += 1
         date = (parts[0].get("time") or "")[:10]
         mmdd = date[5:]
