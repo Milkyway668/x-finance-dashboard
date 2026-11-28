@@ -70,12 +70,48 @@ def canon_link(art):
     return None, None, ""
 
 
+MONTHS = {m: i for i, m in enumerate(
+    ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], 1)}
+
+
 def parse_time_text(txt):
-    """把 X 的时间文字转成 YYYY-MM-DD：3小时 / 7分钟 / 11月20日 / 2026年11月20日 / 昨天"""
+    """把 X 的时间文字转成 YYYY-MM-DD。
+
+    中文界面：3小时 / 7分钟 / 11月20日 / 2026年11月20日 / 昨天
+    英文界面：2h / 5m / 3d / Nov 27 / Nov 27, 2026 / Apr 8, 2025
+    """
     if not txt:
         return ""
     now = datetime.now()
     t = txt.strip()
+
+    # ---- 英文相对时间：2h / 5m / 3d / 45s ----
+    m = re.match(r"^(\d+)\s*(s|m|h|d)$", t)
+    if m:
+        n = int(m.group(1)); unit = m.group(2)
+        delta = {"s": timedelta(seconds=n), "m": timedelta(minutes=n),
+                 "h": timedelta(hours=n), "d": timedelta(days=n)}[unit]
+        return (now - delta).date().isoformat()
+
+    # ---- 英文日期：Nov 27 / Nov 27, 2026 / Apr 8, 2025 ----
+    m = re.match(r"^([A-Za-z]{3})\s+(\d{1,2})(?:,\s*(\d{4}))?$", t)
+    if m and m.group(1).title() in MONTHS:
+        mo, d = MONTHS[m.group(1).title()], int(m.group(2))
+        if m.group(3):
+            years = [int(m.group(3))]
+        else:
+            years = [now.year, now.year - 1]
+        for y in years:
+            try:
+                dt = date(y, mo, d)
+                if dt <= now.date() or m.group(3):
+                    return dt.isoformat()
+            except ValueError:
+                pass
+        return ""
+    if t in ("Yesterday", "yesterday"):
+        return (now.date() - timedelta(days=1)).isoformat()
+
     m = re.search(r"(\d{4})年(\d{1,2})月(\d{1,2})日", t)
     if m:
         y, mo, d = map(int, m.groups())
@@ -146,7 +182,7 @@ def collect_ids(page, user):
         arts = page.locator("article")
         for i in range(arts.count()):
             author, tid, ttxt = canon_link(arts.nth(i))
-            if not tid or (author or "").lower() != user.lower() or tid in ids:
+            if not tid or (author or "").lower() != user.lower() or any(x[0] == tid for x in ids):
                 continue
             iso = parse_time_text(ttxt)
             if not iso:                 # 时间还没渲染出来：不能判断窗口，跳过（避免收进旧推文）
@@ -154,7 +190,7 @@ def collect_ids(page, user):
                 continue
             if date.fromisoformat(iso) < cutoff:
                 continue
-            ids.append(tid)
+            ids.append((tid, iso))
             if len(ids) >= MAX_TWEETS:
                 return
 
@@ -270,7 +306,7 @@ def completeness(tw, tombstone=False):
     return f
 
 
-def fetch_root(page, uid, user):
+def fetch_root(page, uid, user, fallback_date=""):
     open_detail(page, uid, user)
     body = page.inner_text("body")[:3000]
     tomb = ("Subscribers only" in body) or ("订阅者专属" in body) or ("訂閱者專屬" in body)
@@ -286,6 +322,8 @@ def fetch_root(page, uid, user):
     tw = read_article(art) if art else {"text": "", "media": 0, "video": 0,
                                         "likes": None, "retweets": None, "replies": None,
                                         "time": "", "url": ""}
+    if not tw["time"] and fallback_date:   # 被编辑过的推文详情页没有时间链接，用时间线的日期兜底
+        tw["time"] = fallback_date
     tw["id"] = uid
     tw["flags"] = completeness(tw, tomb)
     parts.append(tw)
@@ -388,9 +426,9 @@ def main():
                 log("  收集 ID 失败:", str(e)[:80]); result[u] = []; continue
             log(f"  时间线取到 {len(ids)} 条")
             items = []
-            for uid in ids:
+            for uid, idate in ids:
                 try:
-                    parts = fetch_root(page, uid, u)
+                    parts = fetch_root(page, uid, u, idate)
                     items.append({"root_id": uid, "parts": parts})
                     bad = sum(1 for x in parts if x["flags"])
                     log(f"   - {uid}  {len(parts)} 段" + (f"  [!] {bad} 段异常" if bad else "  OK"))
