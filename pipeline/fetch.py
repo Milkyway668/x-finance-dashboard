@@ -135,25 +135,53 @@ def aria_numbers(art):
 
 
 def collect_ids(page, user):
+    """边滚动边收集：新版是虚拟列表，滚太远会把最新的推文移出 DOM。"""
     page.goto(f"https://x.com/{user}", wait_until="domcontentloaded", timeout=60000)
-    page.wait_for_timeout(random.randint(3500, 5500))
-    rounds = max(8, (MAX_TWEETS + 3) // 4)   # 30 条需要比 7 条多滚几屏
-    for _ in range(rounds):
-        page.mouse.wheel(0, random.randint(800, 1400))
-        page.wait_for_timeout(random.randint(1500, 3000))
-    ids = []
+    page.wait_for_timeout(random.randint(4000, 6000))
     cutoff = (datetime.now() - timedelta(days=MAX_DAYS)).date()
-    arts = page.locator("article")
-    for i in range(arts.count()):
-        author, tid, ttxt = canon_link(arts.nth(i))
-        if not tid or (author or "").lower() != user.lower() or tid in ids:
-            continue
-        iso = parse_time_text(ttxt)
-        if iso and date.fromisoformat(iso) < cutoff:   # 超过时间窗口（含置顶旧帖）跳过
-            continue
-        ids.append(tid)
+    ids, unknown = [], 0
+
+    def scan():
+        nonlocal unknown
+        arts = page.locator("article")
+        for i in range(arts.count()):
+            author, tid, ttxt = canon_link(arts.nth(i))
+            if not tid or (author or "").lower() != user.lower() or tid in ids:
+                continue
+            iso = parse_time_text(ttxt)
+            if not iso:                 # 时间还没渲染出来：不能判断窗口，跳过（避免收进旧推文）
+                unknown += 1
+                continue
+            if date.fromisoformat(iso) < cutoff:
+                continue
+            ids.append(tid)
+            if len(ids) >= MAX_TWEETS:
+                return
+
+    scan()                              # 先收首屏（最新的几条）
+    if unknown and not ids:             # 时间普遍没出来：等一会儿再扫一次
+        page.wait_for_timeout(6000)
+        scan()
+
+    rounds = max(8, (MAX_TWEETS + 3) // 4)
+    for _ in range(rounds):
         if len(ids) >= MAX_TWEETS:
             break
+        page.mouse.wheel(0, random.randint(800, 1400))
+        page.wait_for_timeout(random.randint(1500, 3000))
+        scan()
+
+    if not ids and page.locator("article").count() == 0:
+        # 页面瞬时空白：重载一次再试
+        page.reload(wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(8000)
+        scan()
+        for _ in range(3):
+            if len(ids) >= MAX_TWEETS:
+                break
+            page.mouse.wheel(0, 1000)
+            page.wait_for_timeout(1800)
+            scan()
     return ids
 
 
@@ -251,6 +279,10 @@ def fetch_root(page, uid, user):
     parts = []
 
     art = article_for(page, uid)
+    for _ in range(10):                 # 等时间戳渲染出来（新版前端是异步的）
+        if art and canon_link(art)[2]:
+            break
+        page.wait_for_timeout(800)
     tw = read_article(art) if art else {"text": "", "media": 0, "video": 0,
                                         "likes": None, "retweets": None, "replies": None,
                                         "time": "", "url": ""}
@@ -263,6 +295,10 @@ def fetch_root(page, uid, user):
         a = article_for(page, pid)
         if not a:
             continue
+        for _ in range(10):
+            if canon_link(a)[2]:
+                break
+            page.wait_for_timeout(800)
         t2 = read_article(a)
         t2["id"] = pid
         t2["flags"] = completeness(t2, tomb)
